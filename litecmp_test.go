@@ -47,7 +47,7 @@ func TestBasics(t *testing.T) {
 			break
 		}
 		if try == gcTries-1 {
-			t.Errorf("map len = %d after (%d GC tries); want 0", gcTries, try)
+			t.Errorf("map len = %d after (%d GC tries); want 0", n, gcTries)
 		}
 	}
 }

@@ -13,7 +13,6 @@ package litecmp
 import (
 	"runtime"
 	"sync"
-	"unsafe"
 )
 
 // A Value pointer is the lite handle to an underlying comparable
@@ -25,6 +24,7 @@ type Value struct {
 	_      [0]func() // prevent people from accidentally using value type as comparable
 	cmpVal interface{}
 	gen    int64
+	strong *strong
 }
 
 // Get returns the comparable value passed to the Get func
@@ -33,7 +33,7 @@ func (v *Value) Get() interface{} { return v.cmpVal }
 
 var (
 	mu     sync.Mutex
-	valMap = map[interface{}]uintptr{} // to uintptr(*Value)
+	valMap = map[interface{}]*weak{}
 )
 
 // Get returns a pointer representing the comparable value cmpVal.
@@ -44,13 +44,18 @@ func Get(cmpVal interface{}) *Value {
 	mu.Lock()
 	defer mu.Unlock()
 
-	addr, ok := valMap[cmpVal]
+	w, ok := valMap[cmpVal]
 	var v *Value
 	if ok {
-		v = (*Value)((unsafe.Pointer)(addr))
-	} else {
+		if vi := w.Get(); vi != nil {
+			v = vi.(*Value)
+		}
+	}
+	if v == nil {
 		v = &Value{cmpVal: cmpVal}
-		valMap[cmpVal] = uintptr(unsafe.Pointer(v))
+		s := makeStrong(v)
+		v.strong = s
+		valMap[cmpVal] = s.Weak()
 	}
 	curGen := v.gen + 1
 	v.gen = curGen
@@ -60,15 +65,20 @@ func Get(cmpVal interface{}) *Value {
 		// else the runtime throws.
 		runtime.SetFinalizer(v, nil)
 	}
-	runtime.SetFinalizer(v, func(v *Value) {
+	runtime.SetFinalizer(v, makeFinalizer(curGen))
+	return v
+
+}
+
+func makeFinalizer(gen int64) func(*Value) {
+	return func(v *Value) {
+		println("lite-finalizer")
 		mu.Lock()
 		defer mu.Unlock()
-		if v.gen != curGen {
+		if v.gen != gen {
 			// Lost the race. Somebody is still using us.
 			return
 		}
 		delete(valMap, v.cmpVal)
-	})
-	return v
-
+	}
 }
